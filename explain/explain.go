@@ -3,7 +3,10 @@ package explain
 import (
 	"errors"
 	"fmt"
+	"log"
 	"regexp"
+	"strconv"
+	"strings"
 )
 
 // tidb目前只支持二叉树的join，所以这里只需要考虑二叉树的情况
@@ -21,18 +24,50 @@ type PlanNode struct {
 	Memory        int        `json:"memoryInfo"`   //内存信息
 	Disk          int        `json:"diskInfo"`     //磁盘信息
 	PlanType      FormatType //执行计划类型
-	deep          int        //flag距离行首的字节数
-	childDeep     int        //子节点的deep，确定会存在右节点时，记录左节点的deep，临时使用
-	planFlag      PlanFlag   //flag类型
-	Parent        *PlanNode  //父节点
-	Left          *PlanNode  //左子节点
-	Right         *PlanNode  //右子节点
-	line          string     //该行内容
-	Executor      string     //算子名称
+	planFlag      PlanFlag
+	deep          int       //flag距离行首的字节数
+	childDeep     int       //子节点的deep，确定会存在右节点时，记录左节点的deep，临时使用
+	Parent        *PlanNode //父节点
+	Left          *PlanNode //左子节点
+	Right         *PlanNode //右子节点
+	line          string    //该行内容
+}
+
+func (p *PlanNode) getDeep() int {
+	if p.deep != 0 {
+		return p.deep
+	}
+	// 计算flag距离行首的字节数
+	if p.getPlanFlag() == RootFlag {
+		return 0
+	}
+	re := regexp.MustCompile(`(└─|├─)`)
+	pos := re.FindStringIndex(p.ID)
+	if pos != nil {
+		p.deep = pos[1]
+		return p.deep
+	}
+	log.Println("get deep failed:", p.ID)
+	return 0
+}
+
+func (p *PlanNode) getPlanFlag() PlanFlag {
+	if p.planFlag != "" {
+		return p.planFlag
+	}
+	// 通过解析ID字段，判断当前节点的flag
+	if strings.Contains(p.ID, "├─") {
+		p.planFlag = StartFlag
+	} else if strings.Contains(p.ID, "└─") {
+		p.planFlag = EndFlag
+	} else {
+		p.planFlag = RootFlag
+	}
+	return p.planFlag
 }
 
 func (p *PlanNode) Traverse() {
-	fmt.Println(p.GetExecutor())
+	fmt.Printf("%sPlanID:%s,Executor:%s\n", strings.Repeat(" ", p.deep), p.ID, p.GetExecutor())
 	if p.Left != nil {
 		p.Left.Traverse()
 	}
@@ -48,18 +83,23 @@ func (p *PlanNode) IsLeaf() bool {
 }
 
 func (p *PlanNode) AddChildren(newChild *PlanNode) error {
+	if p.getPlanFlag() == RootFlag && p.Left == nil {
+		newChild.Parent = p
+		p.Left = newChild
+		return nil
+	}
 	//前序遍历，遍历根节点，左子树，右子树
-	if p.deep < newChild.deep {
-		if newChild.planFlag == StartFlag {
+	if p.getDeep() < newChild.getDeep() {
+		if newChild.getPlanFlag() == StartFlag {
 			if p.IsLeaf() {
-				p.childDeep = newChild.deep
+				p.childDeep = newChild.getDeep()
 				newChild.Parent = p
 				p.Left = newChild
 				return nil
 			}
-		} else if newChild.planFlag == EndFlag {
+		} else if newChild.getPlanFlag() == EndFlag {
 			//log.Println("判断右节点能否添加:", p.childDeep, newChild.deep, newChild.GetExecutor())
-			if p.Left != nil && p.childDeep == newChild.deep {
+			if p.Left != nil && p.childDeep == newChild.getDeep() {
 				newChild.Parent = p
 				p.Right = newChild
 				p.childDeep = 0
@@ -83,25 +123,65 @@ func (p *PlanNode) AddChildren(newChild *PlanNode) error {
 // 利用正则表达式找到算子名称
 
 func (p *PlanNode) GetExecutor() string {
-	if p.Executor != "" {
-		return p.Executor
-	}
 	var re *regexp.Regexp
 	// 提取Projection_28算子名称
-	if p.planFlag == RootFlag {
-		re = regexp.MustCompile(`\|\s*(?P<executor>\S+)\s+\|`)
+	if p.getPlanFlag() == RootFlag {
+		re = regexp.MustCompile(`\s*(?P<executor>\w+)(_\d+){1}\s*`)
 	} else {
-		re = regexp.MustCompile(`(└─|├─)(?P<executor>\S+)\s+\|`)
+		re = regexp.MustCompile(`(└─|├─)(?P<executor>\w+)(_\d+){1}\s*`)
 	}
-	match := re.FindStringSubmatch(p.line)
+	match := re.FindStringSubmatch(p.ID)
+	var executor string
 	if len(match) == 0 {
-		return ""
-	}
-	for i, name := range re.SubexpNames() {
-		if name == "executor" {
-			p.Executor = match[i]
-			break
+		executor = ""
+	} else {
+		for i, name := range re.SubexpNames() {
+			if name == "executor" {
+				executor = match[i]
+				break
+			}
 		}
 	}
-	return p.Executor
+	return executor
+}
+
+// 创建执行计划树
+// todo 目前只支持FormatTypePlanBriefText
+
+func NewPlanTree(rawPlan *RawPlan) (planNode *PlanNode, err error) {
+	if rawPlan == nil {
+		return nil, errors.New("raw plan is nil")
+	}
+	if rawPlan.data == nil {
+		return nil, errors.New("raw plan is empty")
+	}
+	if len(rawPlan.data) == 0 {
+		return nil, errors.New("raw plan is empty")
+	}
+	var rootNode *PlanNode
+	if rawPlan.Tp != FormatTypePlanBriefText {
+		return nil, errors.New("unsupported format type")
+	}
+	for i, row := range rawPlan.data {
+		estRows, err := strconv.ParseFloat(row[1], 64)
+		if err != nil {
+			return nil, err
+		}
+		tmpNode := &PlanNode{
+			ID:           row[0],
+			EstRows:      estRows,
+			Task:         row[2],
+			AccessObject: row[3],
+			OperatorInfo: row[4],
+			PlanType:     rawPlan.Tp,
+		}
+		if i == 0 {
+			rootNode = tmpNode
+		} else {
+			if err = rootNode.AddChildren(tmpNode); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return rootNode, nil
 }
