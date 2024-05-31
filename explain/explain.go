@@ -3,27 +3,7 @@ package explain
 import (
 	"errors"
 	"fmt"
-	"log"
 	"regexp"
-)
-
-type PlanFlag string
-
-const StartFlag PlanFlag = "├─"  //占4个字节，当遇到该标志时，说明该行父节点还有兄弟节点
-const EndFlag PlanFlag = "└─"    //占2个字节，当遇到该标志时，说明该行父节点已经是最后一个节点
-const RootFlag PlanFlag = "root" //根节点标
-
-type FormatType int
-
-const (
-	FormatTypePlanBriefText   FormatType = iota //执行计划简要文本，按行输出默认执行计划
-	FormatTypePlanVerboseText                   //执行计划详细文本，包含成本预估信息，按行输出详细执行计划
-	FormatTypePlanBriefJSON
-	FormatTypePlanVerboseJSON
-	FormatTypeAnalyzeBriefText   //执行计划分析简要文本，包含执行信息，按行输出默认执行计划
-	FormatTypeAnalyzeVerboseText //执行计划分析详细文本，包含成本预估信息，执行信息，按行输出详细执行计划
-	FormatTypeAnalyzeBriefJSON
-	FormatTypeAnalyzeVerboseJSON
 )
 
 // tidb目前只支持二叉树的join，所以这里只需要考虑二叉树的情况
@@ -68,7 +48,6 @@ func (p *PlanNode) IsLeaf() bool {
 }
 
 func (p *PlanNode) AddChildren(newChild *PlanNode) error {
-
 	//前序遍历，遍历根节点，左子树，右子树
 	if p.deep < newChild.deep {
 		if newChild.planFlag == StartFlag {
@@ -76,13 +55,11 @@ func (p *PlanNode) AddChildren(newChild *PlanNode) error {
 				p.childDeep = newChild.deep
 				newChild.Parent = p
 				p.Left = newChild
-				log.Println("新增节点:", p.GetExecutor(), p.deep, p.childDeep, newChild.GetExecutor(), newChild.deep)
 				return nil
 			}
 		} else if newChild.planFlag == EndFlag {
 			//log.Println("判断右节点能否添加:", p.childDeep, newChild.deep, newChild.GetExecutor())
 			if p.Left != nil && p.childDeep == newChild.deep {
-				log.Println("newChild:", newChild.GetExecutor())
 				newChild.Parent = p
 				p.Right = newChild
 				p.childDeep = 0
