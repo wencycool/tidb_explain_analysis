@@ -30,9 +30,9 @@ type PlanNode struct {
 	Parent        *PlanNode //父节点
 	Left          *PlanNode //左子节点
 	Right         *PlanNode //右子节点
-	line          string    //该行内容
 }
 
+// 获取flag距离行首的字节数
 func (p *PlanNode) getDeep() int {
 	if p.deep != 0 {
 		return p.deep
@@ -51,6 +51,15 @@ func (p *PlanNode) getDeep() int {
 	return 0
 }
 
+// 判断当前节点时build端还是probe端
+
+func (p *PlanNode) IsBuildSide() bool {
+	if strings.Contains(p.ID, "Build") {
+		return true
+	}
+	return false
+}
+
 func (p *PlanNode) getPlanFlag() PlanFlag {
 	if p.planFlag != "" {
 		return p.planFlag
@@ -67,7 +76,7 @@ func (p *PlanNode) getPlanFlag() PlanFlag {
 }
 
 func (p *PlanNode) Traverse() {
-	fmt.Printf("%sPlanID:%s,Executor:%s\n", strings.Repeat(" ", p.deep), p.ID, p.GetExecutor())
+	fmt.Printf("PlanID:%s,Executor:%s,EstRows:%.2f\n", p.ID, p.GetExecutor(), p.EstRows)
 	if p.Left != nil {
 		p.Left.Traverse()
 	}
