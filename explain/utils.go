@@ -2,7 +2,7 @@ package explain
 
 import (
 	"errors"
-	"gitee.com/wencycool/tidb_explain_analysis/explain/plancodec"
+	"github.com/wencycool/tidb_explain_analysis/explain/plancodec"
 	"regexp"
 	"strconv"
 	"strings"
