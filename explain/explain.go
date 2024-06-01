@@ -92,11 +92,12 @@ func (p *PlanNode) IsLeaf() bool {
 }
 
 func (p *PlanNode) AddChildren(newChild *PlanNode) error {
-	if p.getPlanFlag() == RootFlag && p.Left == nil {
-		newChild.Parent = p
-		p.Left = newChild
-		return nil
-	}
+	//fmt.Println(p.ID, newChild.ID, p.getDeep(), p.childDeep, newChild.getDeep())
+	//if p.getPlanFlag() == RootFlag && p.Left == nil {
+	//	newChild.Parent = p
+	//	p.Left = newChild
+	//	return nil
+	//}
 	//前序遍历，遍历根节点，左子树，右子树
 	if p.getDeep() < newChild.getDeep() {
 		if newChild.getPlanFlag() == StartFlag {
