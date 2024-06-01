@@ -16,7 +16,7 @@ type PlanNode struct {
 	ID            string     `json:"id"`           //节点ID
 	EstCost       float64    `json:"estCost"`      //预估成本
 	EstRows       float64    `json:"estRows"`      //预估行数
-	ActRows       float64    `json:"actRows"`      //实际行数
+	ActRows       float64    `json:"actRows"`      //实际行数，本应该是int类型，但是为了方便和estRows比较，所以使用float64
 	Task          string     `json:"taskType"`     //任务名称，如：root, cop[tikv]等
 	AccessObject  string     `json:"accessObject"` //访问对象
 	OperatorInfo  string     `json:"operatorInfo"` //算子信息
@@ -153,29 +153,103 @@ func NewPlanTree(rawPlan *RawPlan) (planNode *PlanNode, err error) {
 		return nil, errors.New("raw plan is empty")
 	}
 	var rootNode *PlanNode
-	if rawPlan.Tp != FormatTypePlanBriefText {
-		return nil, errors.New("unsupported format type")
-	}
-	for i, row := range rawPlan.data {
-		estRows, err := strconv.ParseFloat(row[1], 64)
-		if err != nil {
-			return nil, err
-		}
-		tmpNode := &PlanNode{
-			ID:           row[0],
-			EstRows:      estRows,
-			Task:         row[2],
-			AccessObject: row[3],
-			OperatorInfo: row[4],
-			PlanType:     rawPlan.Tp,
-		}
-		if i == 0 {
-			rootNode = tmpNode
-		} else {
-			if err = rootNode.AddChildren(tmpNode); err != nil {
+	switch rawPlan.Tp {
+	case FormatTypePlanBriefText:
+		for i, row := range rawPlan.data {
+			estRows, err := strconv.ParseFloat(row[1], 64)
+			if err != nil {
 				return nil, err
 			}
+			tmpNode := &PlanNode{
+				ID:           row[0],
+				EstRows:      estRows,
+				Task:         row[2],
+				AccessObject: row[3],
+				OperatorInfo: row[4],
+				PlanType:     rawPlan.Tp,
+			}
+			if i == 0 {
+				rootNode = tmpNode
+			} else {
+				if err = rootNode.AddChildren(tmpNode); err != nil {
+					return nil, err
+				}
+			}
 		}
+	case FormatTypePlanVerboseText:
+		for i, row := range rawPlan.data {
+			estRows, err := strconv.ParseFloat(row[1], 64)
+			if err != nil {
+				return nil, err
+			}
+			estCost, err := strconv.ParseFloat(row[2], 64)
+			if err != nil {
+				return nil, err
+			}
+			tmpNode := &PlanNode{
+				ID:           row[0],
+				EstRows:      estRows,
+				EstCost:      estCost,
+				Task:         row[3],
+				AccessObject: row[4],
+				OperatorInfo: row[5],
+				PlanType:     rawPlan.Tp,
+			}
+			if i == 0 {
+				rootNode = tmpNode
+			} else {
+				if err = rootNode.AddChildren(tmpNode); err != nil {
+					return nil, err
+				}
+			}
+		}
+	case FormatTypeAnalyzeVerboseText:
+		// explain analyze format='verbose'的执行计划，在select tidb_decode_binary_plan(BINARY_PLAN) from STATEMENTS_SUMMARY中获取的也是这种格式
+		for i, row := range rawPlan.data {
+			estRows, err := strconv.ParseFloat(row[1], 64)
+			if err != nil {
+				return nil, err
+			}
+			estCost, err := strconv.ParseFloat(row[2], 64)
+			if err != nil {
+				return nil, err
+			}
+			actRows, err := strconv.ParseFloat(row[3], 64)
+			if err != nil {
+				return nil, err
+			}
+			meminfo, err := parseUnit(row[8])
+			if err != nil {
+				return nil, err
+			}
+			diskInfo, err := parseUnit(row[9])
+			if err != nil {
+				return nil, err
+			}
+			tmpNode := &PlanNode{
+				ID:            row[0],
+				EstRows:       estRows,
+				EstCost:       estCost,
+				ActRows:       actRows,
+				Task:          row[4],
+				AccessObject:  row[5],
+				ExecutionInfo: row[6],
+				OperatorInfo:  row[7],
+				Memory:        int(meminfo),
+				Disk:          int(diskInfo),
+				PlanType:      rawPlan.Tp,
+			}
+			if i == 0 {
+				rootNode = tmpNode
+			} else {
+				if err = rootNode.AddChildren(tmpNode); err != nil {
+					return nil, err
+				}
+			}
+		}
+	default:
+		return nil, errors.New("unsupported format type")
 	}
+
 	return rootNode, nil
 }

@@ -4,6 +4,8 @@ import (
 	"errors"
 	"explain/plancodec"
 	"regexp"
+	"strconv"
+	"strings"
 )
 
 type PlanFlag string
@@ -45,4 +47,54 @@ func getOperatorName(line string) (string, error) {
 		return "", errors.New("invalid executor name")
 	}
 	return executor, nil
+}
+
+// 解析memory和disk信息，将其变为字节
+func parseUnit(str string) (float64, error) {
+	/*
+	   " 12.1 KB"," 1.07 MB"," N/A"," 0 Bytes","12.3 GB"等多种形式
+	*/
+	var unit float64
+	str = strings.TrimSpace(str)
+	if str == "N/A" {
+		return 0, nil
+	}
+	if strings.HasSuffix(str, "Bytes") {
+		dStr := strings.TrimSpace(strings.TrimSuffix(str, "Bytes"))
+		unit, err := strconv.ParseFloat(dStr, 64)
+		if err != nil {
+			return 0, err
+		} else {
+			return unit, nil
+		}
+	} else if strings.HasSuffix(str, "KB") {
+		dStr := strings.TrimSpace(strings.TrimSuffix(str, "KB"))
+		d, err := strconv.ParseFloat(dStr, 64)
+		if err != nil {
+			return 0, err
+		} else {
+			unit = d * 1024
+		}
+		return unit, nil
+	} else if strings.HasSuffix(str, "MB") {
+		dStr := strings.TrimSpace(strings.TrimSuffix(str, "MB"))
+		d, err := strconv.ParseFloat(dStr, 64)
+		if err != nil {
+			return 0, err
+		} else {
+			unit = d * 1024 * 1024
+		}
+		return unit, nil
+	} else if strings.HasSuffix(str, "GB") {
+		dStr := strings.TrimSpace(strings.TrimSuffix(str, "GB"))
+		d, err := strconv.ParseFloat(dStr, 64)
+		if err != nil {
+			return 0, err
+		} else {
+			unit = d * 1024 * 1024 * 1024
+		}
+		return unit, nil
+	} else {
+		return 0, errors.New("invalid unit")
+	}
 }

@@ -15,7 +15,7 @@ type RawPlan struct {
 func GetRawPlanFromText(text string, formatType FormatType) (rawPlan *RawPlan, err error) {
 	var data [][]string
 	switch formatType {
-	case FormatTypePlanBriefText:
+	case FormatTypePlanBriefText, FormatTypePlanVerboseText, FormatTypeAnalyzeBriefText, FormatTypeAnalyzeVerboseText:
 		data, err = getPlanFromText(text)
 		if err != nil {
 			return nil, err
@@ -27,7 +27,7 @@ func GetRawPlanFromText(text string, formatType FormatType) (rawPlan *RawPlan, e
 
 }
 
-// FormatTypePlanBriefText 格式的执行计划
+// FormatTypePlanBriefText 格式的执行计划，包括所有Text类型的执行计划
 
 func getPlanFromText(planText string) (data [][]string, err error) {
 	withShift := true
