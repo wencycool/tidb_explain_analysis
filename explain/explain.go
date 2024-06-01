@@ -132,24 +132,9 @@ func (p *PlanNode) AddChildren(newChild *PlanNode) error {
 // 利用正则表达式找到算子名称
 
 func (p *PlanNode) GetExecutor() string {
-	var re *regexp.Regexp
-	// 提取Projection_28算子名称
-	if p.getPlanFlag() == RootFlag {
-		re = regexp.MustCompile(`\s*(?P<executor>\w+)(_\d+){1}\s*`)
-	} else {
-		re = regexp.MustCompile(`(└─|├─)(?P<executor>\w+)(_\d+){1}\s*`)
-	}
-	match := re.FindStringSubmatch(p.ID)
-	var executor string
-	if len(match) == 0 {
-		executor = ""
-	} else {
-		for i, name := range re.SubexpNames() {
-			if name == "executor" {
-				executor = match[i]
-				break
-			}
-		}
+	executor, err := getOperatorName(p.ID)
+	if err != nil {
+		return ""
 	}
 	return executor
 }
