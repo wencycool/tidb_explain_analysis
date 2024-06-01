@@ -35,18 +35,11 @@ func getPlanFromText(planText string) (data [][]string, err error) {
 	if err != nil {
 		return nil, err
 	}
-	flagCnt := 0
+Line:
 	for i, line := range strings.Split(planText, "\n") {
 		// 跳过表头
 		if i <= lineNo {
 			continue
-		}
-		if strings.Contains(line, "+----") {
-			flagCnt++
-			continue
-		}
-		if flagCnt == 2 {
-			return data, nil
 		}
 		var row []string
 		// 按照rune进行截取，解析字符串
@@ -55,13 +48,17 @@ func getPlanFromText(planText string) (data [][]string, err error) {
 		for j := 0; j < len(colsPosition); j++ {
 			start := colsPosition[j][0] + shift
 			end := colsPosition[j][1] + shift
-			if end > len(lineRunes) {
-				end = len(lineRunes)
+			if end > len(line) {
+				continue Line
 			}
 			var col string
 			col = string(lineRunes[start:end])
 			if firstCol {
 				firstCol = false
+				// 第一列为executor的id，如果包含"算子名称_数字"的格式，则认为是有效节点，否则直接忽略该行
+				if _, err := getOperatorName(col); err != nil {
+					continue Line
+				}
 			} else {
 				col = strings.TrimSpace(string(lineRunes[start:end]))
 			}
