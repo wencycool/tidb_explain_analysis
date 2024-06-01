@@ -31,8 +31,7 @@ func GetRawPlanFromText(text string, formatType FormatType) (rawPlan *RawPlan, e
 
 func getPlanFromText(planText string) (data [][]string, err error) {
 	withShift := true
-	//不用headerColsPosition 来查找字段起始位置，因为包含中文后无法对其进行正确的截取
-	_, lineNo, err := GetHeaderColsPosition(planText, withShift)
+	colsPosition, lineNo, err := GetHeaderColsPosition(planText, withShift)
 	if err != nil {
 		return nil, err
 	}
@@ -49,21 +48,42 @@ func getPlanFromText(planText string) (data [][]string, err error) {
 		if flagCnt == 2 {
 			return data, nil
 		}
-
-		var row []string
-		// todo 是否会遇到字段中包含"|"的情况?
-		var firstCol = true
-		for _, c := range strings.Split(strings.TrimSpace(line), "|") {
-			if c != "" {
-				// 首列不能去空格，因为需要根据id的长度来判断层级
-				if firstCol {
-					firstCol = false
-				} else {
-					c = strings.TrimSpace(c)
-				}
-				row = append(row, c)
-			}
+		var shift int
+		if withShift {
+			shift = strings.Index(line, "|")
 		}
+		var row []string
+		// 按照rune进行截取，解析字符串
+		lineRunes := []rune(line)
+		var firstCol = true
+		for j := 0; j < len(colsPosition); j++ {
+			start := colsPosition[j][0] + shift
+			end := colsPosition[j][1] + shift
+			if end > len(lineRunes) {
+				end = len(lineRunes)
+			}
+			var col string
+			if firstCol {
+				firstCol = false
+			} else {
+				col = strings.TrimSpace(string(lineRunes[start:end]))
+			}
+			row = append(row, col)
+		}
+
+		//// todo 是否会遇到字段中包含"|"的情况?
+		//var firstCol = true
+		//for _, c := range strings.Split(strings.TrimSpace(line), "|") {
+		//	if c != "" {
+		//		// 首列不能去空格，因为需要根据id的长度来判断层级
+		//		if firstCol {
+		//			firstCol = false
+		//		} else {
+		//			c = strings.TrimSpace(c)
+		//		}
+		//		row = append(row, c)
+		//	}
+		//}
 		if len(data) > 0 {
 			if len(row) != len(data[0]) {
 				return nil, errors.New("row length not match")
@@ -91,6 +111,7 @@ func getPlanFromText(planText string) (data [][]string, err error) {
 // 如果没有找到表头，返回错误
 
 func GetHeaderColsPosition(planText string, withShift bool) (cols [][2]int, lineNo int, err error) {
+	// 标题需要全部为ascii编码，否则需要考虑unicode编码情况采用rune来处理
 	for i, line := range strings.Split(planText, "\n") {
 		// 判断是否全部包含多个字符串
 		if strings.Contains(line, "id") && strings.Contains(line, "estRows") && strings.Contains(line, "task") && strings.Contains(line, "access object") && strings.Contains(line, "operator info") {
