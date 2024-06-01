@@ -1,3 +1,3 @@
-module gitee/wencycool/tidb_explain_analysis
+module gitee.com/wencycool/tidb_explain_analysis
 
 go 1.22.1
