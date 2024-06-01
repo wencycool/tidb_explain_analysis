@@ -16,7 +16,7 @@ func TestGetHeaderColsPositionReturnsCorrectPositions(t *testing.T) {
 2 rows in set (0.00 sec)
 	`
 	expected := [][2]int{{2, 25}, {26, 38}, {39, 50}, {51, 67}, {68, 90}}
-	cols, _, err := GetHeaderColsPosition(planText, false)
+	cols, _, _, err := GetHeaderColsPosition(planText, false, 0)
 	if err != nil {
 		t.Fatalf("Expected no error, but got: %v", err)
 	}
@@ -27,7 +27,7 @@ func TestGetHeaderColsPositionReturnsCorrectPositions(t *testing.T) {
 
 func TestGetHeaderColsPositionReturnsErrorWhenHeaderNotFound(t *testing.T) {
 	planText := "No header here"
-	_, _, err := GetHeaderColsPosition(planText, false)
+	_, _, _, err := GetHeaderColsPosition(planText, false, 0)
 	if err == nil {
 		t.Fatalf("Expected an error, but got none")
 	}
@@ -35,7 +35,7 @@ func TestGetHeaderColsPositionReturnsErrorWhenHeaderNotFound(t *testing.T) {
 
 func TestGetHeaderColsPositionReturnsErrorWhenPlanTextIsEmpty(t *testing.T) {
 	planText := ""
-	_, _, err := GetHeaderColsPosition(planText, false)
+	_, _, _, err := GetHeaderColsPosition(planText, false, 0)
 	if err == nil {
 		t.Fatalf("Expected an error, but got none")
 	}
