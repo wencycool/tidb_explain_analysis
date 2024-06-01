@@ -59,6 +59,7 @@ func getPlanFromText(planText string) (data [][]string, err error) {
 				end = len(lineRunes)
 			}
 			var col string
+			col = string(lineRunes[start:end])
 			if firstCol {
 				firstCol = false
 			} else {
