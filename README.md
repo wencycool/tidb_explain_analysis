@@ -4,8 +4,9 @@
 用于解析 tidb的执行计划
 
 调用方式
-```go
+```text
 package main
+
 func main()  {
 	// 1. 生成执行计划信息
 	planText := "explain analyze format='verbose' from select * from test where id = 1"
