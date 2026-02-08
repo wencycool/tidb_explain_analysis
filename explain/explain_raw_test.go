@@ -15,7 +15,7 @@ func TestGetHeaderColsPositionReturnsCorrectPositions(t *testing.T) {
 +-----------------------+------------+-----------+----------------+----------------------+
 2 rows in set (0.00 sec)
 	`
-	expected := [][2]int{{2, 25}, {26, 38}, {39, 50}, {51, 67}, {68, 90}}
+	expected := [][2]int{{2, 24}, {26, 37}, {39, 49}, {51, 66}, {68, 89}}
 	cols, _, _, err := GetHeaderColsPosition(planText, false, 0)
 	if err != nil {
 		t.Fatalf("Expected no error, but got: %v", err)

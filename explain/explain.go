@@ -140,117 +140,132 @@ func (p *PlanNode) GetExecutor() string {
 	return executor
 }
 
-// 创建执行计划树
-// todo 目前只支持FormatTypePlanBriefText
+type PlanRowParser func(row []string) (*PlanNode, error)
 
+var formatParsers = map[FormatType]PlanRowParser{
+	FormatTypePlanBriefText:   parsePlanBriefRow,
+	FormatTypePlanVerboseText: parsePlanVerboseRow,
+	FormatTypeAnalyzeVerboseText: func(row []string) (*PlanNode, error) {
+		// explain analyze format='verbose'的执行计划，在select tidb_decode_binary_plan(BINARY_PLAN) from STATEMENTS_SUMMARY中获取的也是这种格式
+		if len(row) < 10 {
+			return nil, fmt.Errorf("invalid analyze verbose row length: %d", len(row))
+		}
+		estRows, err := strconv.ParseFloat(row[1], 64)
+		if err != nil {
+			return nil, err
+		}
+		estCost, err := strconv.ParseFloat(row[2], 64)
+		if err != nil {
+			return nil, err
+		}
+		actRows, err := strconv.ParseFloat(row[3], 64)
+		if err != nil {
+			return nil, err
+		}
+		meminfo, err := parseUnit(row[8])
+		if err != nil {
+			return nil, err
+		}
+		diskInfo, err := parseUnit(row[9])
+		if err != nil {
+			return nil, err
+		}
+		return &PlanNode{
+			ID:            row[0],
+			EstRows:       estRows,
+			EstCost:       estCost,
+			ActRows:       actRows,
+			Task:          row[4],
+			AccessObject:  row[5],
+			ExecutionInfo: row[6],
+			OperatorInfo:  row[7],
+			Memory:        int(meminfo),
+			Disk:          int(diskInfo),
+		}, nil
+	},
+}
+
+// RegisterPlanRowParser allows callers to register custom row parsers for new formats.
+func RegisterPlanRowParser(format FormatType, parser PlanRowParser) error {
+	if parser == nil {
+		return errors.New("parser is nil")
+	}
+	if _, exists := formatParsers[format]; exists {
+		return fmt.Errorf("parser already registered for format %d", format)
+	}
+	formatParsers[format] = parser
+	return nil
+}
+
+// 创建执行计划树
 func NewPlanTree(rawPlan *RawPlan) (planNode *PlanNode, err error) {
 	if rawPlan == nil {
 		return nil, errors.New("raw plan is nil")
 	}
-	if rawPlan.data == nil {
+	if rawPlan.data == nil || len(rawPlan.data) == 0 {
 		return nil, errors.New("raw plan is empty")
 	}
-	if len(rawPlan.data) == 0 {
-		return nil, errors.New("raw plan is empty")
-	}
-	var rootNode *PlanNode
-	switch rawPlan.Tp {
-	case FormatTypePlanBriefText:
-		for i, row := range rawPlan.data {
-			estRows, err := strconv.ParseFloat(row[1], 64)
-			if err != nil {
-				return nil, err
-			}
-			tmpNode := &PlanNode{
-				ID:           row[0],
-				EstRows:      estRows,
-				Task:         row[2],
-				AccessObject: row[3],
-				OperatorInfo: row[4],
-				PlanType:     rawPlan.Tp,
-			}
-			if i == 0 {
-				rootNode = tmpNode
-			} else {
-				if err = rootNode.AddChildren(tmpNode); err != nil {
-					return nil, err
-				}
-			}
-		}
-	case FormatTypePlanVerboseText:
-		for i, row := range rawPlan.data {
-			estRows, err := strconv.ParseFloat(row[1], 64)
-			if err != nil {
-				return nil, err
-			}
-			estCost, err := strconv.ParseFloat(row[2], 64)
-			if err != nil {
-				return nil, err
-			}
-			tmpNode := &PlanNode{
-				ID:           row[0],
-				EstRows:      estRows,
-				EstCost:      estCost,
-				Task:         row[3],
-				AccessObject: row[4],
-				OperatorInfo: row[5],
-				PlanType:     rawPlan.Tp,
-			}
-			if i == 0 {
-				rootNode = tmpNode
-			} else {
-				if err = rootNode.AddChildren(tmpNode); err != nil {
-					return nil, err
-				}
-			}
-		}
-	case FormatTypeAnalyzeVerboseText:
-		// explain analyze format='verbose'的执行计划，在select tidb_decode_binary_plan(BINARY_PLAN) from STATEMENTS_SUMMARY中获取的也是这种格式
-		for i, row := range rawPlan.data {
-			estRows, err := strconv.ParseFloat(row[1], 64)
-			if err != nil {
-				return nil, err
-			}
-			estCost, err := strconv.ParseFloat(row[2], 64)
-			if err != nil {
-				return nil, err
-			}
-			actRows, err := strconv.ParseFloat(row[3], 64)
-			if err != nil {
-				return nil, err
-			}
-			meminfo, err := parseUnit(row[8])
-			if err != nil {
-				return nil, err
-			}
-			diskInfo, err := parseUnit(row[9])
-			if err != nil {
-				return nil, err
-			}
-			tmpNode := &PlanNode{
-				ID:            row[0],
-				EstRows:       estRows,
-				EstCost:       estCost,
-				ActRows:       actRows,
-				Task:          row[4],
-				AccessObject:  row[5],
-				ExecutionInfo: row[6],
-				OperatorInfo:  row[7],
-				Memory:        int(meminfo),
-				Disk:          int(diskInfo),
-				PlanType:      rawPlan.Tp,
-			}
-			if i == 0 {
-				rootNode = tmpNode
-			} else {
-				if err = rootNode.AddChildren(tmpNode); err != nil {
-					return nil, err
-				}
-			}
-		}
-	default:
+	parser, ok := formatParsers[rawPlan.Tp]
+	if !ok {
 		return nil, errors.New("unsupported format type")
 	}
+	return buildPlanTree(rawPlan, parser)
+}
 
+func buildPlanTree(rawPlan *RawPlan, parser PlanRowParser) (*PlanNode, error) {
+	var rootNode *PlanNode
+	for i, row := range rawPlan.data {
+		tmpNode, err := parser(row)
+		if err != nil {
+			return nil, err
+		}
+		tmpNode.PlanType = rawPlan.Tp
+		if i == 0 {
+			rootNode = tmpNode
+			continue
+		}
+		if err = rootNode.AddChildren(tmpNode); err != nil {
+			return nil, err
+		}
+	}
 	return rootNode, nil
+}
+
+func parsePlanBriefRow(row []string) (*PlanNode, error) {
+	if len(row) < 5 {
+		return nil, fmt.Errorf("invalid plan brief row length: %d", len(row))
+	}
+	estRows, err := strconv.ParseFloat(row[1], 64)
+	if err != nil {
+		return nil, err
+	}
+	return &PlanNode{
+		ID:           row[0],
+		EstRows:      estRows,
+		Task:         row[2],
+		AccessObject: row[3],
+		OperatorInfo: row[4],
+	}, nil
+}
+
+func parsePlanVerboseRow(row []string) (*PlanNode, error) {
+	if len(row) < 6 {
+		return nil, fmt.Errorf("invalid plan verbose row length: %d", len(row))
+	}
+	estRows, err := strconv.ParseFloat(row[1], 64)
+	if err != nil {
+		return nil, err
+	}
+	estCost, err := strconv.ParseFloat(row[2], 64)
+	if err != nil {
+		return nil, err
+	}
+	return &PlanNode{
+		ID:           row[0],
+		EstRows:      estRows,
+		EstCost:      estCost,
+		Task:         row[3],
+		AccessObject: row[4],
+		OperatorInfo: row[5],
+	}, nil
 }

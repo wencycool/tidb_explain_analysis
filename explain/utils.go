@@ -2,10 +2,11 @@ package explain
 
 import (
 	"errors"
-	"github.com/wencycool/tidb_explain_analysis/explain/plancodec"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/wencycool/tidb_explain_analysis/explain/plancodec"
 )
 
 type PlanFlag string
@@ -27,16 +28,26 @@ const (
 	FormatTypeAnalyzeVerboseJSON
 )
 
+var (
+	operatorNameRegexp = regexp.MustCompile(`(└─|├─){0,1}(?P<executor>\w+)(_\d+){1}\s*`)
+	unitMultipliers    = map[string]float64{
+		"B":     1,
+		"Bytes": 1,
+		"KB":    1024,
+		"MB":    1024 * 1024,
+		"GB":    1024 * 1024 * 1024,
+		"TB":    1024 * 1024 * 1024 * 1024,
+	}
+)
+
 // 判断一个字符串中是否包含算子名称，如果存在则返回算子名称，否则返回空字符串
 func getOperatorName(line string) (string, error) {
-	var re *regexp.Regexp
-	re = regexp.MustCompile(`(└─|├─){0,1}(?P<executor>\w+)(_\d+){1}\s*`)
-	match := re.FindStringSubmatch(line)
+	match := operatorNameRegexp.FindStringSubmatch(line)
 	var executor string
 	if len(match) == 0 {
 		executor = ""
 	} else {
-		for i, name := range re.SubexpNames() {
+		for i, name := range operatorNameRegexp.SubexpNames() {
 			if name == "executor" {
 				executor = match[i]
 				break
@@ -54,47 +65,28 @@ func parseUnit(str string) (float64, error) {
 	/*
 	   " 12.1 KB"," 1.07 MB"," N/A"," 0 Bytes","12.3 GB"等多种形式
 	*/
-	var unit float64
 	str = strings.TrimSpace(str)
-	if str == "N/A" {
+	if str == "" || str == "N/A" {
 		return 0, nil
 	}
-	if strings.HasSuffix(str, "Bytes") {
-		dStr := strings.TrimSpace(strings.TrimSuffix(str, "Bytes"))
-		unit, err := strconv.ParseFloat(dStr, 64)
+	parts := strings.Fields(str)
+	if len(parts) == 1 {
+		value, err := strconv.ParseFloat(parts[0], 64)
 		if err != nil {
 			return 0, err
-		} else {
-			return unit, nil
 		}
-	} else if strings.HasSuffix(str, "KB") {
-		dStr := strings.TrimSpace(strings.TrimSuffix(str, "KB"))
-		d, err := strconv.ParseFloat(dStr, 64)
-		if err != nil {
-			return 0, err
-		} else {
-			unit = d * 1024
-		}
-		return unit, nil
-	} else if strings.HasSuffix(str, "MB") {
-		dStr := strings.TrimSpace(strings.TrimSuffix(str, "MB"))
-		d, err := strconv.ParseFloat(dStr, 64)
-		if err != nil {
-			return 0, err
-		} else {
-			unit = d * 1024 * 1024
-		}
-		return unit, nil
-	} else if strings.HasSuffix(str, "GB") {
-		dStr := strings.TrimSpace(strings.TrimSuffix(str, "GB"))
-		d, err := strconv.ParseFloat(dStr, 64)
-		if err != nil {
-			return 0, err
-		} else {
-			unit = d * 1024 * 1024 * 1024
-		}
-		return unit, nil
-	} else {
+		return value, nil
+	}
+	if len(parts) != 2 {
 		return 0, errors.New("invalid unit")
 	}
+	value, err := strconv.ParseFloat(parts[0], 64)
+	if err != nil {
+		return 0, err
+	}
+	multiplier, ok := unitMultipliers[parts[1]]
+	if !ok {
+		return 0, errors.New("invalid unit")
+	}
+	return value * multiplier, nil
 }

@@ -120,7 +120,10 @@ func GetHeaderColsPosition(planText string, withShift bool, splitFlag rune) (col
 			for _, c := range strings.Split(line[shift:len(line)], string(splitFlag)) {
 				// 去掉\t和\r
 				if c != "" && c != string(rune(9)) && c != string(rune(13)) {
-					cols = append(cols, [2]int{strings.Index(line, c) - shift, strings.Index(line, c) + len(c) - shift})
+					leadingSpaces := len(c) - len(strings.TrimLeft(c, " "))
+					start := strings.Index(line, c) + leadingSpaces
+					end := start + len(c) - leadingSpaces
+					cols = append(cols, [2]int{start - shift, end - shift})
 				}
 			}
 			lineNo = i
