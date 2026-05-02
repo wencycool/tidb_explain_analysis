@@ -3,68 +3,60 @@ package explain
 import (
 	"errors"
 	"fmt"
-	"log"
 	"regexp"
 	"strconv"
 	"strings"
 )
 
-// tidb目前只支持二叉树的join，所以这里只需要考虑二叉树的情况
-// 存放explain <sql>的执行计划
-
+// PlanNode stores one TiDB explain plan operator.
 type PlanNode struct {
-	ID            string     `json:"id"`           //节点ID
-	EstCost       float64    `json:"estCost"`      //预估成本
-	EstRows       float64    `json:"estRows"`      //预估行数
-	ActRows       float64    `json:"actRows"`      //实际行数，本应该是int类型，但是为了方便和estRows比较，所以使用float64
-	Task          string     `json:"taskType"`     //任务名称，如：root, cop[tikv]等
-	AccessObject  string     `json:"accessObject"` //访问对象
-	OperatorInfo  string     `json:"operatorInfo"` //算子信息
-	ExecutionInfo string     `json:"executeInfo"`  //执行信息
-	Memory        int        `json:"memoryInfo"`   //内存信息
-	Disk          int        `json:"diskInfo"`     //磁盘信息
-	PlanType      FormatType //执行计划类型
+	ID            string      `json:"id"`           // 节点ID
+	EstCost       float64     `json:"estCost"`      // 预估成本
+	EstRows       float64     `json:"estRows"`      // 预估行数
+	ActRows       float64     `json:"actRows"`      // 实际行数
+	Task          string      `json:"taskType"`     // 任务名称，如：root, cop[tikv]等
+	AccessObject  string      `json:"accessObject"` // 访问对象
+	OperatorInfo  string      `json:"operatorInfo"` // 算子信息
+	ExecutionInfo string      `json:"executeInfo"`  // 执行信息
+	Memory        int         `json:"memoryInfo"`   // 内存信息，单位 byte
+	Disk          int         `json:"diskInfo"`     // 磁盘信息，单位 byte
+	MemoryBytes   int64       `json:"memoryBytes"`  // 内存信息，单位 byte
+	DiskBytes     int64       `json:"diskBytes"`    // 磁盘信息，单位 byte
+	PlanType      FormatType  `json:"planType"`     // 执行计划类型
+	Children      []*PlanNode `json:"children"`     // 子节点，保留 TiDB explain 输出顺序
 	planFlag      PlanFlag
-	deep          int       //flag距离行首的字节数
-	childDeep     int       //子节点的deep，确定会存在右节点时，记录左节点的deep，临时使用
-	Parent        *PlanNode //父节点
-	Left          *PlanNode //左子节点
-	Right         *PlanNode //右子节点
+	deep          int       // flag 距离行首的 rune 数
+	Parent        *PlanNode `json:"-"` // 父节点
+	Left          *PlanNode `json:"-"` // 兼容旧 API：第一个子节点
+	Right         *PlanNode `json:"-"` // 兼容旧 API：第二个子节点
 }
 
-// 获取flag距离行首的字节数
+// getDeep returns the tree marker depth by rune index instead of byte index.
 func (p *PlanNode) getDeep() int {
 	if p.deep != 0 {
 		return p.deep
 	}
-	// 计算flag距离行首的字节数
 	if p.getPlanFlag() == RootFlag {
 		return 0
 	}
 	re := regexp.MustCompile(`(└─|├─)`)
-	pos := re.FindStringIndex(p.ID)
-	if pos != nil {
-		p.deep = pos[1]
-		return p.deep
+	idx := re.FindStringIndex(p.ID)
+	if idx == nil {
+		return 0
 	}
-	log.Println("get deep failed:", p.ID)
-	return 0
+	p.deep = len([]rune(p.ID[:idx[1]]))
+	return p.deep
 }
 
-// 判断当前节点时build端还是probe端
-
+// IsBuildSide reports whether the operator is annotated as a join build side.
 func (p *PlanNode) IsBuildSide() bool {
-	if strings.Contains(p.ID, "Build") {
-		return true
-	}
-	return false
+	return strings.Contains(p.ID, "Build")
 }
 
 func (p *PlanNode) getPlanFlag() PlanFlag {
 	if p.planFlag != "" {
 		return p.planFlag
 	}
-	// 通过解析ID字段，判断当前节点的flag
 	if strings.Contains(p.ID, "├─") {
 		p.planFlag = StartFlag
 	} else if strings.Contains(p.ID, "└─") {
@@ -77,61 +69,37 @@ func (p *PlanNode) getPlanFlag() PlanFlag {
 
 func (p *PlanNode) Traverse() {
 	fmt.Printf("PlanID:%s,Executor:%s,EstRows:%.2f\n", p.ID, p.GetExecutor(), p.EstRows)
-	if p.Left != nil {
-		p.Left.Traverse()
-	}
-	if p.Right != nil {
-		p.Right.Traverse()
+	for _, child := range p.Children {
+		child.Traverse()
 	}
 }
 
-// 判断当前节点是否是叶子节点
-
+// IsLeaf reports whether the node has no children.
 func (p *PlanNode) IsLeaf() bool {
-	return p.Left == nil && p.Right == nil
+	return len(p.Children) == 0
 }
 
+// AddChildren attaches a child to the receiver. It is kept for compatibility;
+// NewPlanTree uses a stack-based builder for the full tree.
 func (p *PlanNode) AddChildren(newChild *PlanNode) error {
-	//fmt.Println(p.ID, newChild.ID, p.getDeep(), p.childDeep, newChild.getDeep())
-	//if p.getPlanFlag() == RootFlag && p.Left == nil {
-	//	newChild.Parent = p
-	//	p.Left = newChild
-	//	return nil
-	//}
-	//前序遍历，遍历根节点，左子树，右子树
-	if p.getDeep() < newChild.getDeep() {
-		if newChild.getPlanFlag() == StartFlag {
-			if p.IsLeaf() {
-				p.childDeep = newChild.getDeep()
-				newChild.Parent = p
-				p.Left = newChild
-				return nil
-			}
-		} else if newChild.getPlanFlag() == EndFlag {
-			//log.Println("判断右节点能否添加:", p.childDeep, newChild.deep, newChild.GetExecutor())
-			if p.Left != nil && p.childDeep == newChild.getDeep() {
-				newChild.Parent = p
-				p.Right = newChild
-				p.childDeep = 0
-				return nil
-			} else if p.IsLeaf() {
-				newChild.Parent = p
-				p.Left = newChild
-				return nil
-			}
-		}
+	if p == nil || newChild == nil {
+		return errors.New("nil plan node")
 	}
-	if p.Right != nil {
-		return p.Right.AddChildren(newChild)
-	} else if p.Left != nil {
-		return p.Left.AddChildren(newChild)
-	}
-	return errors.New("add children failed")
+	p.appendChild(newChild)
+	return nil
 }
 
-// " |       └─Projection_28                              |"
-// 利用正则表达式找到算子名称
+func (p *PlanNode) appendChild(child *PlanNode) {
+	child.Parent = p
+	p.Children = append(p.Children, child)
+	if len(p.Children) == 1 {
+		p.Left = child
+	} else if len(p.Children) == 2 {
+		p.Right = child
+	}
+}
 
+// GetExecutor returns the physical executor name from the id column.
 func (p *PlanNode) GetExecutor() string {
 	executor, err := getOperatorName(p.ID)
 	if err != nil {
@@ -146,7 +114,7 @@ var formatParsers = map[FormatType]PlanRowParser{
 	FormatTypePlanBriefText:   parsePlanBriefRow,
 	FormatTypePlanVerboseText: parsePlanVerboseRow,
 	FormatTypeAnalyzeVerboseText: func(row []string) (*PlanNode, error) {
-		// explain analyze format='verbose'的执行计划，在select tidb_decode_binary_plan(BINARY_PLAN) from STATEMENTS_SUMMARY中获取的也是这种格式
+		// explain analyze format='verbose' 的执行计划，在 select tidb_decode_binary_plan(BINARY_PLAN) from STATEMENTS_SUMMARY 中获取的也是这种格式
 		if len(row) < 10 {
 			return nil, fmt.Errorf("invalid analyze verbose row length: %d", len(row))
 		}
@@ -162,7 +130,7 @@ var formatParsers = map[FormatType]PlanRowParser{
 		if err != nil {
 			return nil, err
 		}
-		meminfo, err := parseUnit(row[8])
+		memInfo, err := parseUnit(row[8])
 		if err != nil {
 			return nil, err
 		}
@@ -179,8 +147,10 @@ var formatParsers = map[FormatType]PlanRowParser{
 			AccessObject:  row[5],
 			ExecutionInfo: row[6],
 			OperatorInfo:  row[7],
-			Memory:        int(meminfo),
+			Memory:        int(memInfo),
 			Disk:          int(diskInfo),
+			MemoryBytes:   int64(memInfo),
+			DiskBytes:     int64(diskInfo),
 		}, nil
 	},
 }
@@ -197,7 +167,7 @@ func RegisterPlanRowParser(format FormatType, parser PlanRowParser) error {
 	return nil
 }
 
-// 创建执行计划树
+// NewPlanTree creates a tree from a raw TiDB explain plan.
 func NewPlanTree(rawPlan *RawPlan) (planNode *PlanNode, err error) {
 	if rawPlan == nil {
 		return nil, errors.New("raw plan is nil")
@@ -214,19 +184,35 @@ func NewPlanTree(rawPlan *RawPlan) (planNode *PlanNode, err error) {
 
 func buildPlanTree(rawPlan *RawPlan, parser PlanRowParser) (*PlanNode, error) {
 	var rootNode *PlanNode
+	var stack []*PlanNode
 	for i, row := range rawPlan.data {
-		tmpNode, err := parser(row)
+		node, err := parser(row)
 		if err != nil {
 			return nil, err
 		}
-		tmpNode.PlanType = rawPlan.Tp
+		node.PlanType = rawPlan.Tp
+		depth := node.getDeep()
 		if i == 0 {
-			rootNode = tmpNode
+			if node.getPlanFlag() != RootFlag {
+				return nil, errors.New("first plan node is not root")
+			}
+			rootNode = node
+			stack = []*PlanNode{node}
 			continue
 		}
-		if err = rootNode.AddChildren(tmpNode); err != nil {
-			return nil, err
+		parentIdx := -1
+		for j := len(stack) - 1; j >= 0; j-- {
+			if stack[j].getDeep() < depth {
+				parentIdx = j
+				break
+			}
 		}
+		if parentIdx < 0 {
+			return nil, fmt.Errorf("cannot find parent for plan node %q", node.ID)
+		}
+		parent := stack[parentIdx]
+		parent.appendChild(node)
+		stack = append(stack[:parentIdx+1], node)
 	}
 	return rootNode, nil
 }
